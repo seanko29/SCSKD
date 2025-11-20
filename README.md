@@ -47,7 +47,7 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 --master_port=4321 basicsr/
 
 Example.
 CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 --master_port=4321 basicsr/train.py -opt train_scskd_edsr_x4.yml --launcher pytorch
-
+`````
 ## Acknowledgements
 
 This code is built on [BasicSR](https://github.com/XPixelGroup/BasicSR).
