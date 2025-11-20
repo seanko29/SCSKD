@@ -1,0 +1,180 @@
+name: SCSKD_RCAN_x3
+model_type: SCSKDModel
+scale: 3
+num_gpu: auto  # set num_gpu: 0 for cpu mode
+manual_seed: 10
+
+# dataset and data loader settings
+datasets:
+  train:
+    name: DIV2K
+    type: PairedImageDataset
+    dataroot_gt: /data/DIV2K_train_HR
+    dataroot_lq: /data/DIV2K_train_LR_bicubic/X3
+    filename_tmpl: '{}x3'
+    io_backend:
+      type: disk
+
+    gt_size: 144
+    use_hflip: true
+    use_rot: true
+
+    # data loader
+    use_shuffle: true
+    num_worker_per_gpu: 8
+    batch_size_per_gpu: 32
+    dataset_enlarge_ratio: 10
+    prefetch_mode: ~
+
+  val:
+    name: Set5
+    type: PairedImageDataset
+    dataroot_gt: /data/benchmark/Set5/HR
+    dataroot_lq: /data/benchmark/Set5/LR_bicubic/X3
+    filename_tmpl: '{}x3'
+    io_backend:
+      type: disk
+
+
+network_g:
+  type: RCAN
+  num_in_ch: 3
+  num_out_ch: 3
+  num_feat: 64
+  num_group: 10
+  num_block: 6
+  squeeze_factor: 16
+  upscale: 3
+  res_scale: 1
+  img_range: 1.
+  rgb_mean: [0.4488, 0.4371, 0.4040]
+
+
+# Teacher: ViT-based (SwinIR) - THIS IS THE KEY CHANGE
+network_t:
+  type: SwinIR
+  upscale: 3
+  in_chans: 3
+  img_size: 48
+  window_size: 8
+  img_range: 1.                   # Note: Different from CNN-based models!
+  depths: [6, 6, 6, 6, 6, 6]
+  embed_dim: 180
+  num_heads: [6, 6, 6, 6, 6, 6]
+  mlp_ratio: 2
+  upsampler: 'pixelshuffle'
+  resi_connection: '1conv'
+
+
+# --------------------------------------------------------------------------
+# Paths and KDs 
+# --------------------------------------------------------------------------
+
+
+
+path:
+  pretrain_network_g: /pretrained/RCAN_x2.pth
+  pretrain_network_t: /pretrained/001_classicalSR_DIV2K_s48w8_SwinIR-M_x3.pth
+  param_key_t: 'params_ema'
+  strict_load_g: false
+  resume_state: ~
+
+
+kd_head:
+  student_mid_channels: 64      
+  teacher_token_dim: 180        
+  num_scales: 3
+  router_topk: 8
+  router_temp: 1.0
+  router_downsample_keys: 2   # 1 (off), 2 (↓N by 4×), 4 (↓N by 16×)
+
+  teacher_has_cls: true
+
+distill:
+  tap_pairing: "zip"
+
+
+  student_tap: ["conv_first", "body.4.conv", "body.6.conv", "body.8.conv", "upsample.0"]
+  teacher_tap: ["conv_first", "layers.3.residual_group", "layers.5.residual_group", "conv_after_body", "upsample.0"]
+
+  target_feature_count: 5        
+
+# --------------------------------------------------------------------------
+# Training settings 
+# --------------------------------------------------------------------------
+
+train:
+  amp: true
+  compile: false
+  
+  ema_decay: 0.999
+  optim_g:
+    type: Adam
+    lr: 1.0e-4            
+    betas: [0.9, 0.999]
+    weight_decay: 0.0
+
+  scheduler:
+    type: MultiStepLR
+    milestones: [100000, 200000]
+    gamma: 0.5
+
+  total_iter: 250000
+  warmup_iter: -1  # no warm up
+
+  # ========================================================================
+  # SCSKD losses
+  # ========================================================================
+  pixel_opt:
+    type: L1Loss
+    loss_weight: 1.0              
+    reduction: mean
+
+  kd_opt:
+    type: L1Loss  
+    loss_weight: 0.1             
+    reduction: mean
+
+
+  swd_chunk: 32
+  swd_num_proj: 64  #64 ->32
+  
+  lambda_rec: 1.0
+  lambda_kd: 0.3      
+  lambda_swd: 0.2     
+
+# --------------------------------------------------------------------------
+# Validation
+# --------------------------------------------------------------------------
+val:
+  val_freq: 5000.0  
+  save_img: false
+  self_ensemble: true
+
+  metrics:
+    psnr:
+      type: calculate_psnr
+      crop_border: 3
+      test_y_channel: true
+    ssim:
+      type: calculate_ssim
+      crop_border: 3
+      test_y_channel: true
+
+# --------------------------------------------------------------------------
+# Logging
+# --------------------------------------------------------------------------
+logger:
+  print_freq: 100
+  save_checkpoint_freq: 5000.0
+  use_tb_logger: true
+  wandb:
+    project: ~
+
+# --------------------------------------------------------------------------
+# Distributed
+# --------------------------------------------------------------------------
+dist_params:
+  backend: nccl
+  port: 29500
+  find_unused_parameters: true
