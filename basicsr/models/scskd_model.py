@@ -124,8 +124,7 @@ class SCSKDModel(BaseKD):
         router_temp       = float(kd_opt.get('router_temp', 1.0))
         router_down       = int(kd_opt.get('router_downsample_keys', 1))
 
-        # ----- Build modules that setup_optimizers() needs to see -----
-        # Core SCSAKD modules (safe to build now)
+
         self.router  = StudentConditionedRouter(
             s_dim=student_mid_ch, t_dim=teacher_token_dim,
             k=router_topk, temperature=router_temp, downsample_keys=router_down
@@ -134,18 +133,16 @@ class SCSKDModel(BaseKD):
         # Map teacher token dim -> student mid channels for loss
         # self.align_1x1 = nn.Conv2d(teacher_token_dim, student_mid_ch, 1).to(self.device)
 
-        # Fallback projections (rarely used)
         self.fallback_proj = nn.Conv2d(3, teacher_token_dim, 1).to(self.device)
         self.student_proj  = nn.Conv2d(3, student_mid_ch, 1).to(self.device)
         self.teacher_proj  = nn.Conv2d(3, teacher_token_dim, 1).to(self.device)
         nn.init.xavier_uniform_(self.student_proj.weight); nn.init.zeros_(self.student_proj.bias)
         nn.init.xavier_uniform_(self.teacher_proj.weight); nn.init.zeros_(self.teacher_proj.bias)
 
-        # ---- Aligners must exist before setup_optimizers() runs ----
         self.aligned_c = student_mid_ch
         self.adapter = SpectralAdapter(
-            vit_dim=teacher_token_dim,   # 180
-            cnn_dim=self.aligned_c,      # 64  ← change from 180 to 64
+            vit_dim=teacher_token_dim,   #
+            cnn_dim=self.aligned_c,      
             num_scales=num_scales,
             use_gn=True
         ).to(self.device)
@@ -155,7 +152,6 @@ class SCSKDModel(BaseKD):
         if hasattr(nn, "LazyConv2d"):
             self.student_in_align = nn.LazyConv2d(self.aligned_c, kernel_size=1, bias=True).to(self.device)
         else:
-            # fallback; recreated later if in_channels mismatch (see _ensure_align helper if you use it)
             self.student_in_align = nn.Conv2d(self.aligned_c, self.aligned_c, kernel_size=1, bias=True).to(self.device)
         self.teacher_in_align = nn.Conv2d(self.teacher_token_dim, self.aligned_c, kernel_size=1, bias=True).to(self.device)
         self._runtime_aligners = nn.ModuleDict()
@@ -163,7 +159,6 @@ class SCSKDModel(BaseKD):
         # Small gate for KD path
         self.kd_gate = nn.Parameter(torch.ones(1, device=self.device))
 
-        # ----- Training toggles parsed early (used later) -----
         train_opt = opt['train']
         self.loss_schedule = train_opt.get('loss_schedule', {}) # curriculum learning schedule for loss weights
         
@@ -179,14 +174,12 @@ class SCSKDModel(BaseKD):
         super().__init__(opt)
 
 
-        # ---- KD aligners (after nets/opt are constructed) ----
         self.aligned_c = student_mid_ch
         self.teacher_token_dim = teacher_token_dim
 
         if hasattr(nn, "LazyConv2d"):
             self.student_in_align = nn.LazyConv2d(self.aligned_c, kernel_size=1, bias=True).to(self.device)
         else:
-            # fallback (we will recreate if in_channels mismatch—see _ensure_align)
             self.student_in_align = nn.Conv2d(self.aligned_c, self.aligned_c, kernel_size=1, bias=True).to(self.device)
         self.teacher_in_align = nn.Conv2d(self.teacher_token_dim, self.aligned_c, kernel_size=1, bias=True).to(self.device)
         self.kd_gate = nn.Parameter(torch.ones(1, device=self.device))
@@ -214,7 +207,6 @@ class SCSKDModel(BaseKD):
         self.lambda_swd  = train_opt.get('lambda_swd',  0.2)
 
         # Initialize dynamic weights (will update during training)
-        # Always initialize current_lambda values, regardless of loss_schedule
         self.current_lambda_rec = self.lambda_rec
         self.current_lambda_kd = self.lambda_kd  
         self.current_lambda_swd = self.lambda_swd
@@ -397,7 +389,6 @@ class SCSKDModel(BaseKD):
             nn.init.kaiming_uniform_(conv.weight, a=1.0)
             nn.init.zeros_(conv.bias)
             self._runtime_aligners[name] = conv
-            # make sure new params are optimized
             if hasattr(self, 'optimizer_g'):
                 self.optimizer_g.add_param_group({'params': conv.parameters()})
         return self._runtime_aligners[name](x)
