@@ -1,4 +1,4 @@
-# SCSKD - CVPR2026 Submission 
+# SCSKD
 
 
 
